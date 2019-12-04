@@ -14,7 +14,7 @@ func TestHexToBase64(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected nil error got %#v", err)
 	}
-	if bytes.Compare(actual, expected) != 0 {
+	if !bytes.Equal(actual, expected) {
 		t.Errorf("expected %s, got %s", expected, actual)
 	}
 
@@ -27,7 +27,7 @@ func TestFixedXOR(t *testing.T) {
 	expected := []byte("746865206b696420646f6e277420706c6179")
 
 	actual, _ := FixedXOR(input, xored)
-	if bytes.Compare(actual, expected) != 0 {
+	if !bytes.Equal(actual, expected) {
 		t.Errorf("expected %s, got %s", expected, actual)
 	}
 }
