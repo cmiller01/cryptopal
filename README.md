@@ -1,2 +1,4 @@
 # cryptopal
-A golang cryptopal exploration
+A golang cryptopals exploration
+
+See: https://cryptopals.com/
