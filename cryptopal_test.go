@@ -39,8 +39,14 @@ func TestSingleXOR(t *testing.T) {
 	expected := byte(88) // checked manually
 	hexIn := &HexIn{Src: input}
 
-	actual := hexIn.SingleXOR()
+	actual, _ := hexIn.SingleXOR()
 	if actual != expected {
 		t.Errorf("expected magic 88, got %d", actual)
 	}
+}
+
+func TestFindXOR(t *testing.T) {
+	input := challenge4
+	res := FindXOR(input)
+	fmt.Println("results %s", res)
 }

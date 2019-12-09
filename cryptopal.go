@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -51,34 +52,40 @@ func singleXOR(input []byte, key byte) []byte {
 	return res
 }
 
+func scorePlaintext(input []byte) (score int) {
+
+	if !utf8.Valid(input) {
+		return score
+	}
+	// "score points" for two letters, points for printable characters
+	// lose points for control characters and invalid encoded utf8 strings
+	for i := range input {
+		if unicode.IsLetter(rune(input[i])) {
+			score += 2
+		}
+		if unicode.IsPrint(rune(input[i])) {
+			score++
+		}
+		if unicode.IsPunct(rune(input[i])) {
+			score--
+		}
+		if unicode.IsControl(rune(input[i])) {
+			score -= 2
+		}
+	}
+	return score
+
+}
+
 // SingleXOR returns the most likely value that was xored against a string
-func (h *HexIn) SingleXOR() byte {
+func (h *HexIn) SingleXOR() (byte, int) {
 	decoded := make([]byte, hex.DecodedLen(len(h.Src)))
 	result := make([]int, 256)
 	hex.Decode(decoded, h.Src)
 	for i := 0; i <= 255; i++ {
 		key := byte(i)
 		res := singleXOR(decoded, key)
-		// "score points" for two letters, points for printable characters
-		// lose points for control characters and invalid encoded utf8 strings
-		var score int
-		for i := range res {
-			// if the whole thing isn't valid utf8 then throw it out...
-			if utf8.Valid(res) {
-				if unicode.IsLetter(rune(res[i])) {
-					score += 2
-				}
-				if unicode.IsPrint(rune(res[i])) {
-					score++
-				}
-				if unicode.IsPunct(rune(res[i])) {
-					score--
-				}
-				if unicode.IsControl(rune(res[i])) {
-					score -= 2
-				}
-			}
-		}
+		score := scorePlaintext(res)
 		result[i] = score
 
 	}
@@ -90,6 +97,30 @@ func (h *HexIn) SingleXOR() byte {
 			maxScore = result[r]
 		}
 	}
-	return key
+	return key, maxScore
+
+}
+
+// FindXOR find the decoded string among a bunch of strings...
+func FindXOR(blob string) string {
+	// turn into slice of strings
+	input := strings.Fields(blob)
+	results := make(map[int]int, len(input))
+	for i := range input {
+		h := &HexIn{Src: []byte(input[i])}
+		_, results[i] = h.SingleXOR()
+	}
+	var maxScore int
+	var idx int
+	for k, v := range results {
+		if v >= maxScore {
+			maxScore = v
+			idx = k
+		}
+	}
+	h := &HexIn{Src: []byte(input[idx])}
+	key, _ := h.SingleXOR()
+	final := singleXOR(h.Src, key)
+	return string(final)
 
 }
