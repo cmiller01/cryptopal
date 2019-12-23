@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -44,6 +45,24 @@ func (h *HexIn) FixedXOR(xor []byte) ([]byte, error) {
 	return dest, nil
 }
 
+func scoreWord(word string) int {
+	// see https://norvig.com/mayzner.html
+	wordLength := len(word)
+	switch wordLength {
+	case 1, 9, 10:
+		return 2
+	case 2, 3, 4:
+		return 10
+	case 5, 6, 7, 8:
+		return 4
+	}
+	if len(word) > 20 {
+		return 0
+	}
+	return 1
+}
+
+// singleXOR returns the input xored against a key
 func singleXOR(input []byte, key byte) []byte {
 	res := make([]byte, len(input))
 	for i, value := range input {
@@ -73,21 +92,26 @@ func scorePlaintext(input []byte) (score int) {
 			score -= 2
 		}
 	}
+	words := strings.Fields(string(input))
+	for i := range words {
+		score += scoreWord(words[i])
+	}
 	return score
 
 }
 
 // SingleXOR returns the most likely value that was xored against a string
-func (h *HexIn) SingleXOR() (byte, int) {
+func (h *HexIn) SingleXOR() (byte, int, []byte) {
 	decoded := make([]byte, hex.DecodedLen(len(h.Src)))
 	result := make([]int, 256)
+	resultPlain := make([][]byte, 256)
 	hex.Decode(decoded, h.Src)
 	for i := 0; i <= 255; i++ {
 		key := byte(i)
 		res := singleXOR(decoded, key)
 		score := scorePlaintext(res)
 		result[i] = score
-
+		resultPlain[i] = res
 	}
 	var maxScore int
 	var key byte
@@ -97,7 +121,7 @@ func (h *HexIn) SingleXOR() (byte, int) {
 			maxScore = result[r]
 		}
 	}
-	return key, maxScore
+	return key, maxScore, resultPlain[key]
 
 }
 
@@ -108,7 +132,8 @@ func FindXOR(blob string) string {
 	results := make(map[int]int, len(input))
 	for i := range input {
 		h := &HexIn{Src: []byte(input[i])}
-		_, results[i] = h.SingleXOR()
+		_, foo, _ := h.SingleXOR()
+		results[i] = foo
 	}
 	var maxScore int
 	var idx int
@@ -119,8 +144,129 @@ func FindXOR(blob string) string {
 		}
 	}
 	h := &HexIn{Src: []byte(input[idx])}
-	key, _ := h.SingleXOR()
-	final := singleXOR(h.Src, key)
+	_, _, final := h.SingleXOR()
 	return string(final)
 
+}
+
+// RepeatingKeyXOR encrypts an input string with 'repeating key XOR'
+// see: https://cryptopals.com/sets/1/challenges/5
+func RepeatingKeyXOR(input string, key string) (result string) {
+	inbytes := []byte(input)
+	kbytes := []byte(key)
+
+	res := make([]byte, len(inbytes))
+	for idx, b := range inbytes {
+		res[idx] = b ^ (kbytes[(idx)%len(kbytes)])
+	}
+	return hex.EncodeToString(res)
+}
+
+func hamming(x, y []byte) (n int, err error) {
+	if len(x) != len(y) {
+		return n, fmt.Errorf("expected equal length strings got len %d and %d", len(x), len(y))
+	}
+
+	for idx := range x {
+		a := x[idx]
+		b := y[idx]
+		for i := 0; i < 8; i++ {
+			if a&(1<<i) != b&(1<<i) {
+				n++
+			}
+		}
+	}
+	return n, nil
+}
+
+// scoreSingleXOR returns the most likely value that was xored against a string
+func scoreSingleXOR(input []byte) byte {
+	result := make([]int, 256, 256)
+	for i := 0; i <= 255; i++ {
+		key := byte(i)
+		res := singleXOR(input, key)
+		score := scorePlaintext(res)
+		result[i] = score
+	}
+	var maxScore int
+	var key byte
+	for r := range result {
+		if result[r] >= maxScore {
+			key = byte(r)
+			maxScore = result[r]
+		}
+	}
+	return key
+}
+
+// BreakRepeatingXOR tries to break an encrypted string
+func BreakRepeatingXOR(cipher []byte) (result string, err error) {
+	minKeySize := 2
+	maxKeySize := 40
+
+	type distance struct {
+		KeySize  int
+		Distance float32
+	}
+
+	// find minimum distances
+	keyDistances := make([]distance, maxKeySize-minKeySize+1, maxKeySize-minKeySize+1)
+	for k := minKeySize; k < (maxKeySize + 1); k++ {
+		if 2*k < len(cipher) {
+			x := cipher[:k]
+			y := cipher[k : 2*k]
+			dist, err := hamming(x, y)
+			if err != nil {
+				return result, err
+			}
+			keyDistances[k-minKeySize] = distance{
+				KeySize:  k,
+				Distance: float32(dist) / float32(k),
+			}
+		}
+	}
+
+	sort.Slice(keyDistances, func(i, j int) bool { return keyDistances[i].Distance < keyDistances[j].Distance })
+
+	type cipherStruct struct {
+		KeySize          int
+		Blocks           [][]byte
+		TransposedBlocks [][]byte
+		Key              []byte
+		Plaintext        []byte
+	}
+	// keysizes to test
+	topKeySizes := 4
+	ciphers := make([]cipherStruct, topKeySizes, topKeySizes)
+	for i := range ciphers {
+		keySize := keyDistances[i].KeySize
+		blocks := make([][]byte, 0)
+		for b := 0; b < (len(cipher) / keySize); b++ {
+			blocks = append(blocks, cipher[b*keySize:(b+1)*keySize])
+		}
+
+		transposedBlocks := make([][]byte, keySize, keySize)
+		for idx := range blocks {
+			for i := range blocks[idx] {
+				transposedBlocks[i] = append(transposedBlocks[i], blocks[idx][i])
+			}
+		}
+		key := []byte{}
+		for _, t := range transposedBlocks {
+			x := scoreSingleXOR(t)
+			key = append(key, x)
+		}
+		ciphers[i] = cipherStruct{
+			KeySize:          keySize,
+			Blocks:           blocks,
+			Key:              key,
+			TransposedBlocks: transposedBlocks,
+		}
+	}
+	for _, c := range ciphers {
+
+		fmt.Printf("DEBUG %d %d %d %s\n", len(c.TransposedBlocks), len(c.TransposedBlocks[0]), c.KeySize, c.Key)
+	}
+
+	return result, err
 }
