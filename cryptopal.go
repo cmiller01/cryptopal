@@ -212,31 +212,36 @@ func BreakRepeatingXOR(cipher []byte) (result string, err error) {
 	// find minimum distances
 	keyDistances := make([]distance, maxKeySize-minKeySize+1, maxKeySize-minKeySize+1)
 	for k := minKeySize; k < (maxKeySize + 1); k++ {
-		if 2*k < len(cipher) {
-			x := cipher[:k]
-			y := cipher[k : 2*k]
-			dist, err := hamming(x, y)
+		var dist int
+		var iters int
+		for i := 0; i < len(cipher)/k-2; i++ {
+			x := cipher[i*k : (i+1)*k]
+			y := cipher[(i+1)*k : (i+2)*k]
+			d, err := hamming(x, y)
 			if err != nil {
 				return result, err
 			}
-			keyDistances[k-minKeySize] = distance{
-				KeySize:  k,
-				Distance: float32(dist) / float32(k),
-			}
+			dist += d
+			iters++
+		}
+		keyDistances[k-minKeySize] = distance{
+			KeySize:  k,
+			Distance: float32(dist) / float32(k) / float32(iters),
 		}
 	}
 
 	sort.Slice(keyDistances, func(i, j int) bool { return keyDistances[i].Distance < keyDistances[j].Distance })
 
+	fmt.Printf("DEBUG keyDistances %#v", keyDistances)
 	type cipherStruct struct {
 		KeySize          int
 		Blocks           [][]byte
 		TransposedBlocks [][]byte
 		Key              []byte
-		Plaintext        []byte
+		Plaintext        string
 	}
 	// keysizes to test
-	topKeySizes := 4
+	topKeySizes := 2
 	ciphers := make([]cipherStruct, topKeySizes, topKeySizes)
 	for i := range ciphers {
 		keySize := keyDistances[i].KeySize
@@ -256,16 +261,18 @@ func BreakRepeatingXOR(cipher []byte) (result string, err error) {
 			x := scoreSingleXOR(t)
 			key = append(key, x)
 		}
+		result = RepeatingKeyXOR(string(cipher), string(key))
+		resultB, _ := hex.DecodeString(result)
 		ciphers[i] = cipherStruct{
 			KeySize:          keySize,
 			Blocks:           blocks,
 			Key:              key,
 			TransposedBlocks: transposedBlocks,
+			Plaintext:        string(resultB),
 		}
-	}
-	for _, c := range ciphers {
-
-		fmt.Printf("DEBUG %d %d %d %s\n", len(c.TransposedBlocks), len(c.TransposedBlocks[0]), c.KeySize, c.Key)
+		for _, c := range ciphers {
+			fmt.Printf("DEBUG ====== plaintext: %s\n KeySize: %d\n", c.Plaintext, c.KeySize)
+		}
 	}
 
 	return result, err
